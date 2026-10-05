@@ -1,0 +1,34 @@
+# devdoctor configuration
+# Copy to ~/.config/devdoctor/config.toml
+
+# Default command timeout in seconds (used when no override)
+timeout_seconds = 5
+
+# Tools to detect. If absent, all defaults are used.
+[tools]
+enabled = [
+    "git",
+    "docker",
+    "go",
+    "rustc",
+    "cargo",
+    "node",
+    "npm",
+    "pnpm",
+    "python3",
+    "php",
+    "composer",
+    "kubectl",
+    "helm",
+    "terraform",
+    "aws",
+]
+
+# Ports to probe (TCP listen check)
+[ports]
+check = [3000, 3306, 5432, 6379, 8000, 8080, 9000]
+
+# Kubernetes behavior
+[kubernetes]
+# Warn (instead of pass) when the current namespace is "default"
+warn_default_namespace = true
