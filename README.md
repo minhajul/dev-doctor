@@ -1,4 +1,4 @@
-# devdoctor
+# Dev Doctor
 
 A fast, friendly CLI for inspecting the local developer environment. `devdoctor`
 checks common tools, services, and platform-engineering dependencies, and prints
@@ -161,26 +161,6 @@ devdoctor check --json
 ```
 
 JSON output is always free of ANSI escape codes.
-
-## Architecture
-
-```
-src/
-├── main.rs          # entry point, arg parsing, dispatch
-├── cli.rs           # clap derive types
-├── config.rs        # TOML config loading & defaults
-├── command.rs       # Runner trait + tokio CommandRunner + FakeRunner
-├── output.rs        # terminal and JSON rendering
-├── models.rs        # Status / Diagnostic / DiagnosticGroup / Report / Summary
-└── diagnostics/
-    ├── mod.rs       # fan-out across categories
-    ├── system.rs    # OS / arch / shell / hostname / user
-    ├── tools.rs     # CLI tool presence + version parsing
-    ├── docker.rs    # docker info, compose, container counts
-    ├── kubernetes.rs# kubectl context, namespace, cluster
-    ├── aws.rs       # aws cli, region, sts caller identity
-    └── ports.rs     # TCP probe on configured ports
-```
 
 ### Diagnostic model
 
