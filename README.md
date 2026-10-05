@@ -225,4 +225,4 @@ becomes a new file under `src/diagnostics/` plus a `Category` variant.
 
 ## License
 
-MIT OR Apache-2.0
+MIT
