@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`devdoctor` is a Rust (edition 2021, Tokio) binary-only CLI that inspects the local dev environment (system, tools, Docker, Kubernetes, AWS, ports) and prints a colorized or JSON health report. It is **read-only by design**: diagnostics must never change Docker/Kubernetes/AWS/system state, and must never print secret material.
+`devdoctor` is a Rust (edition 2021, Tokio) binary-only CLI that inspects the local dev environment (system, tools, Docker, Kubernetes, AWS, ports, required env vars) and prints a colorized or JSON health report. It is **read-only by design**: diagnostics must never change Docker/Kubernetes/AWS/system state, and must never print secret material.
 
 ## Commands
 
@@ -29,7 +29,7 @@ Flow: `main.rs` parses args (`cli.rs`), loads config (`config.rs`), builds a `Sh
 - **Data model (`models.rs`)**: `Diagnostic { name, status, message }` → `DiagnosticGroup` (one per category) → `Report { groups, summary }`. `Status` serializes lowercase; this is the JSON output contract.
 - **Command execution (`command.rs`)**: external processes must go through the `Runner` trait (`SharedRunner = Arc<dyn Runner>`). `CommandRunner` enforces a hard timeout with `kill_on_drop(true)` and returns `CommandFailure::{NotFound, Timeout, NonZeroExit, Io}` so diagnostics can degrade to Warning/Failed instead of erroring. Timeout comes from `config.timeout()`.
 - **Diagnostics (`src/diagnostics/`)**: each module exposes `pub async fn collect(runner, config) -> DiagnosticGroup` and must never panic on missing tools. Independent probes within a module run concurrently (`tokio::join!`); `run_categories` in `diagnostics/mod.rs` spawns each category on Tokio and awaits them in the canonical `Category::all()` order, converting a task panic into a synthetic `internal` failed diagnostic. Shared parsing helpers (version extraction etc.) live in `diagnostics/util.rs`. Version requirements (`[tools.versions]`) use the small hand-rolled comparator in `src/version.rs`, deliberately not the `semver` crate, because tool versions are often not valid SemVer.
-  - Exceptions: `system::collect()` takes no args, and `ports` ignores the runner — it does a direct TCP connect to `127.0.0.1` and calls `lsof`/`ss` via `tokio::process` for best-effort process names. Ports are informational (always healthy) unless listed in `ports.expect_listening` / `ports.expect_free`.
+  - Exceptions: `system::collect()` takes no args, and `ports` ignores the runner — it does a direct TCP connect to `127.0.0.1` and calls `lsof`/`ss` via `tokio::process` for best-effort process names. Ports are informational (always healthy) unless listed in `ports.expect_listening` / `ports.expect_free`. `env::collect(config)` also ignores the runner, and `run_categories` omits the Env category from the default run when `env.required` is empty.
 
 ### Adding a new diagnostic category
 

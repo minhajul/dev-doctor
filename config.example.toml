@@ -38,6 +38,10 @@ check = [3000, 3306, 5432, 6379, 8000, 8080, 9000]
 # Fail if these ports are already taken (e.g. the dev server port)
 # expect_free = [3000]
 
+# Environment variables that must be set (values are never printed)
+# [env]
+# required = ["DATABASE_URL"]
+
 # Kubernetes behavior
 [kubernetes]
 # Warn (instead of pass) when the current namespace is "default"

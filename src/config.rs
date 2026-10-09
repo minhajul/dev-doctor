@@ -63,6 +63,10 @@ pub struct Config {
     /// Kubernetes configuration.
     #[serde(default)]
     pub kubernetes: KubernetesConfig,
+
+    /// Environment variable configuration.
+    #[serde(default)]
+    pub env: EnvConfig,
 }
 
 fn default_timeout() -> u64 {
@@ -76,6 +80,7 @@ impl Default for Config {
             tools: ToolsConfig::default(),
             ports: PortsConfig::default(),
             kubernetes: KubernetesConfig::default(),
+            env: EnvConfig::default(),
         }
     }
 }
@@ -159,6 +164,13 @@ pub struct PortsConfig {
     /// Ports that must be free (e.g. the port the dev server binds).
     #[serde(default)]
     pub expect_free: Vec<u16>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EnvConfig {
+    /// Environment variables that must be set. Values are never printed.
+    #[serde(default)]
+    pub required: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

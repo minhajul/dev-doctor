@@ -40,7 +40,8 @@ Healthy: 8    Warnings: 2    Failed: 1
 ## Features
 
 - Cross-platform: macOS and Linux.
-- Diagnostic categories: system, tools, Docker, Kubernetes, AWS, ports.
+- Diagnostic categories: system, tools, Docker, Kubernetes, AWS, ports,
+  required environment variables.
 - Concurrent execution with per-command timeouts (no hangs).
 - Colorized terminal output, `NO_COLOR`-aware.
 - JSON output for CI (`devdoctor check --json`).
@@ -82,6 +83,7 @@ devdoctor check --category docker
 devdoctor check --category kubernetes
 devdoctor check --category aws
 devdoctor check --category ports
+devdoctor check --category env
 
 # shortcut subcommands
 devdoctor tools
@@ -89,6 +91,7 @@ devdoctor docker
 devdoctor kubernetes
 devdoctor aws
 devdoctor ports
+devdoctor env
 
 # JSON output
 devdoctor check --json
@@ -165,6 +168,15 @@ expect_free = [3000]              # the dev server needs this port
 
 When only expectations are set, the default port list is not probed. Add
 `check = [...]` to probe other ports for information.
+
+Required environment variables are checked for presence only; their values
+are never read into the report. An empty value is a warning, a missing one a
+failure. The Environment section only appears when this list is set.
+
+```toml
+[env]
+required = ["DATABASE_URL", "STRIPE_API_KEY"]
+```
 
 ## Exit codes
 
