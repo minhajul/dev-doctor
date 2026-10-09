@@ -153,6 +153,19 @@ A tool whose version doesn't meet its requirement is reported as failed, e.g.
 `✗ node  18.19.1 (requires >=20, <23)`. Supported operators are `>=`, `>`,
 `<=`, `<` and `=`; combine several with commas.
 
+Ports can carry an expectation. By default a port is reported either way
+(in use or available) without failing; with an expectation, the wrong state
+fails:
+
+```toml
+[ports]
+expect_listening = [5432, 6379]   # Postgres and Redis must be running
+expect_free = [3000]              # the dev server needs this port
+```
+
+When only expectations are set, the default port list is not probed. Add
+`check = [...]` to probe other ports for information.
+
 ## Exit codes
 
 | Code | Meaning                                                |

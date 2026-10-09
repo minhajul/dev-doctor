@@ -101,12 +101,39 @@ impl Config {
         tools
     }
 
-    /// Resolve the list of ports to probe, applying defaults if absent.
+    /// Resolve the list of ports to probe. Defaults apply only when no port
+    /// list or expectation is configured; ports with an expectation are
+    /// always included.
     pub fn resolved_ports(&self) -> Vec<u16> {
-        match &self.ports.check {
+        let p = &self.ports;
+        let mut ports = match &p.check {
             Some(list) => list.clone(),
-            None => DEFAULT_PORTS.to_vec(),
+            None if p.expect_listening.is_empty() && p.expect_free.is_empty() => {
+                DEFAULT_PORTS.to_vec()
+            }
+            None => Vec::new(),
+        };
+        for port in p.expect_listening.iter().chain(&p.expect_free) {
+            if !ports.contains(port) {
+                ports.push(*port);
+            }
         }
+        ports
+    }
+
+    /// Cross-field checks serde can't express.
+    fn validate(&self) -> Result<(), String> {
+        if let Some(port) = self
+            .ports
+            .expect_listening
+            .iter()
+            .find(|p| self.ports.expect_free.contains(p))
+        {
+            return Err(format!(
+                "port {port} is in both ports.expect_listening and ports.expect_free"
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -124,6 +151,14 @@ pub struct ToolsConfig {
 pub struct PortsConfig {
     /// If `Some`, restricts which ports are probed. If `None`, defaults apply.
     pub check: Option<Vec<u16>>,
+
+    /// Ports where a service must be listening (e.g. a local database).
+    #[serde(default)]
+    pub expect_listening: Vec<u16>,
+
+    /// Ports that must be free (e.g. the port the dev server binds).
+    #[serde(default)]
+    pub expect_free: Vec<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +195,8 @@ pub enum ConfigError {
         #[source]
         source: toml::de::Error,
     },
+    #[error("invalid config in {path}: {message}")]
+    Invalid { path: PathBuf, message: String },
 }
 
 /// Default config path: `$XDG_CONFIG_HOME/devdoctor/config.toml` or
@@ -215,12 +252,18 @@ pub fn load_layered(paths: &[&Path]) -> Result<Config, ConfigError> {
     let Some(last_path) = last_path else {
         return Ok(Config::default());
     };
-    toml::Value::Table(merged)
-        .try_into()
-        .map_err(|source| ConfigError::Parse {
-            path: last_path.to_path_buf(),
-            source,
-        })
+    let config: Config =
+        toml::Value::Table(merged)
+            .try_into()
+            .map_err(|source| ConfigError::Parse {
+                path: last_path.to_path_buf(),
+                source,
+            })?;
+    config.validate().map_err(|message| ConfigError::Invalid {
+        path: last_path.to_path_buf(),
+        message,
+    })?;
+    Ok(config)
 }
 
 /// Read `path` as a TOML table, validating it against [`Config`] on its own
@@ -389,6 +432,40 @@ warn_default_namespace = false
             err.to_string().contains("invalid version requirement"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn port_expectations_replace_defaults_and_are_probed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[ports]\nexpect_listening = [5432]\nexpect_free = [3000]\n",
+        )
+        .expect("write");
+        let c = load_from(&path).expect("load");
+        assert_eq!(c.resolved_ports(), vec![5432, 3000]);
+
+        std::fs::write(
+            &path,
+            "[ports]\ncheck = [8080, 5432]\nexpect_listening = [5432]\n",
+        )
+        .expect("write");
+        let c = load_from(&path).expect("load");
+        assert_eq!(c.resolved_ports(), vec![8080, 5432]);
+    }
+
+    #[test]
+    fn conflicting_port_expectations_are_rejected() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[ports]\nexpect_listening = [80]\nexpect_free = [80]\n",
+        )
+        .expect("write");
+        let err = load_from(&path).expect_err("should fail");
+        assert!(err.to_string().contains("port 80"), "{err}");
     }
 
     #[test]

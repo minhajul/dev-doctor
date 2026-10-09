@@ -3,6 +3,10 @@
 //! Each port is probed with a fast TCP connect on `127.0.0.1:<port>` with
 //! a short timeout. We also try `lsof` / `ss` for best-effort process
 //! identification; if those fail, the diagnostic still works.
+//!
+//! By default either state is healthy and the result is informational.
+//! Ports listed in `expect_listening` / `expect_free` fail when they are in
+//! the other state.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::sync::Arc;
@@ -22,7 +26,14 @@ pub async fn collect(
 
     let mut handles = Vec::with_capacity(ports.len());
     for port in ports {
-        handles.push(tokio::spawn(async move { probe_port(port).await }));
+        let expect = if config.ports.expect_listening.contains(&port) {
+            Expect::Listening
+        } else if config.ports.expect_free.contains(&port) {
+            Expect::Free
+        } else {
+            Expect::Either
+        };
+        handles.push(tokio::spawn(async move { probe_port(port, expect).await }));
     }
 
     let mut group = DiagnosticGroup::new("Ports");
@@ -34,14 +45,32 @@ pub async fn collect(
     group
 }
 
-async fn probe_port(port: u16) -> Diagnostic {
+/// What the config expects to find on a port.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expect {
+    Either,
+    Listening,
+    Free,
+}
+
+async fn probe_port(port: u16, expect: Expect) -> Diagnostic {
     let name = format!(":{port}");
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     match TcpStream::connect_timeout(&addr, Duration::from_millis(750)) {
-        Ok(_) => match lookup_process(port).await {
-            Some(proc) => Diagnostic::healthy(name, format!("in use ({proc})")),
-            None => Diagnostic::healthy(name, "in use".to_string()),
-        },
+        Ok(_) => {
+            let msg = match lookup_process(port).await {
+                Some(proc) => format!("in use ({proc})"),
+                None => "in use".to_string(),
+            };
+            if expect == Expect::Free {
+                Diagnostic::failed(name, format!("{msg}, expected free"))
+            } else {
+                Diagnostic::healthy(name, msg)
+            }
+        }
+        Err(_) if expect == Expect::Listening => {
+            Diagnostic::failed(name, "nothing listening, expected a service")
+        }
         Err(_) => Diagnostic::healthy(name, "available".to_string()),
     }
 }
@@ -114,6 +143,37 @@ mod tests {
     fn extract_process_from_ss_handles_missing_users() {
         let line = "LISTEN 0 128 *:3000 *:*";
         assert_eq!(extract_process_from_ss(line), None);
+    }
+
+    use crate::models::Status;
+
+    #[tokio::test]
+    async fn expectations_decide_status() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let busy = listener.local_addr().expect("addr").port();
+        let free = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+            l.local_addr().expect("addr").port()
+        };
+
+        assert_eq!(
+            probe_port(busy, Expect::Listening).await.status,
+            Status::Healthy
+        );
+        assert_eq!(
+            probe_port(busy, Expect::Either).await.status,
+            Status::Healthy
+        );
+        assert_eq!(probe_port(busy, Expect::Free).await.status, Status::Failed);
+        assert_eq!(probe_port(free, Expect::Free).await.status, Status::Healthy);
+        assert_eq!(
+            probe_port(free, Expect::Either).await.status,
+            Status::Healthy
+        );
+        assert_eq!(
+            probe_port(free, Expect::Listening).await.status,
+            Status::Failed
+        );
     }
 
     #[tokio::test]

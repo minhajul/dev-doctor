@@ -33,6 +33,10 @@ enabled = [
 # Ports to probe (TCP listen check)
 [ports]
 check = [3000, 3306, 5432, 6379, 8000, 8080, 9000]
+# Fail if nothing is listening on these ports (e.g. a local database)
+# expect_listening = [5432]
+# Fail if these ports are already taken (e.g. the dev server port)
+# expect_free = [3000]
 
 # Kubernetes behavior
 [kubernetes]
