@@ -33,7 +33,12 @@ pub async fn collect(
         } else {
             Expect::Either
         };
-        handles.push(tokio::spawn(async move { probe_port(port, expect).await }));
+        let hint = config.ports.hints.get(&port.to_string()).cloned();
+        handles.push(tokio::spawn(async move {
+            probe_port(port, expect)
+                .await
+                .with_configured_hint(hint.as_ref())
+        }));
     }
 
     let mut group = DiagnosticGroup::new("Ports");

@@ -3,6 +3,7 @@
 //! Checks that each variable in `env.required` is set. Values are never
 //! read into the report: only "set", "set but empty", or "not set".
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::sync::Arc;
 
@@ -11,10 +12,16 @@ use crate::models::{Diagnostic, DiagnosticGroup};
 
 /// Collect diagnostics for every required environment variable.
 pub async fn collect(config: Arc<Config>) -> DiagnosticGroup {
-    collect_with(&config.env.required, |name| std::env::var_os(name))
+    collect_with(&config.env.required, &config.env.hints, |name| {
+        std::env::var_os(name)
+    })
 }
 
-fn collect_with(required: &[String], lookup: impl Fn(&str) -> Option<OsString>) -> DiagnosticGroup {
+fn collect_with(
+    required: &[String],
+    hints: &BTreeMap<String, String>,
+    lookup: impl Fn(&str) -> Option<OsString>,
+) -> DiagnosticGroup {
     let mut group = DiagnosticGroup::new("Environment");
     for name in required {
         let diag = match lookup(name) {
@@ -26,7 +33,7 @@ fn collect_with(required: &[String], lookup: impl Fn(&str) -> Option<OsString>) 
                 "export {name}=... in your shell, or add it to the project's env file"
             )),
         };
-        group.push(diag);
+        group.push(diag.with_configured_hint(hints.get(name)));
     }
     group
 }
@@ -43,7 +50,8 @@ mod tests {
             "EMPTY".to_string(),
             "MISSING".to_string(),
         ];
-        let group = collect_with(&required, |name| match name {
+        let hints = BTreeMap::from([("MISSING".to_string(), "cp .env.example .env".to_string())]);
+        let group = collect_with(&required, &hints, |name| match name {
             "SET" => Some("hunter2".into()),
             "EMPTY" => Some("".into()),
             _ => None,
@@ -58,5 +66,10 @@ mod tests {
             .diagnostics
             .iter()
             .all(|d| !d.message.contains("hunter2")));
+        assert_eq!(
+            group.diagnostics[2].hint.as_deref(),
+            Some("cp .env.example .env")
+        );
+        assert!(group.diagnostics[1].hint.is_some(), "built-in hint kept");
     }
 }

@@ -181,6 +181,22 @@ failure. The Environment section only appears when this list is set.
 required = ["DATABASE_URL", "STRIPE_API_KEY"]
 ```
 
+Every warning and failure carries a built-in hint. A project can replace it
+with its own instructions for tools, ports and env vars:
+
+```toml
+[tools.hints]
+node = "run `nvm use` (version pinned in .nvmrc)"
+
+[ports.hints]
+5432 = "start the database: `docker compose up -d db`"
+
+[env.hints]
+DATABASE_URL = "copy the defaults: `cp .env.example .env`"
+```
+
+Hints only show for checks that didn't pass.
+
 ## Exit codes
 
 | Code | Meaning                                                |

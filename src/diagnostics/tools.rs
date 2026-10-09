@@ -30,7 +30,12 @@ pub async fn collect(runner: SharedRunner, config: Arc<Config>) -> DiagnosticGro
             let runner = runner.clone();
             let tool = tool.clone();
             let req = config.tools.versions.get(&tool).cloned();
-            tokio::spawn(async move { detect_tool(&runner, &tool, req.as_ref(), timeout).await })
+            let hint = config.tools.hints.get(&tool).cloned();
+            tokio::spawn(async move {
+                detect_tool(&runner, &tool, req.as_ref(), timeout)
+                    .await
+                    .with_configured_hint(hint.as_ref())
+            })
         })
         .collect();
 

@@ -30,6 +30,10 @@ enabled = [
 # node = ">=20"
 # go = ">=1.22, <2"
 
+# Optional per-tool hints shown when a tool check fails
+# [tools.hints]
+# node = "run `nvm use`"
+
 # Ports to probe (TCP listen check)
 [ports]
 check = [3000, 3306, 5432, 6379, 8000, 8080, 9000]
@@ -37,10 +41,15 @@ check = [3000, 3306, 5432, 6379, 8000, 8080, 9000]
 # expect_listening = [5432]
 # Fail if these ports are already taken (e.g. the dev server port)
 # expect_free = [3000]
+# Optional per-port hints (keys are port numbers)
+# [ports.hints]
+# 5432 = "docker compose up -d db"
 
 # Environment variables that must be set (values are never printed)
 # [env]
 # required = ["DATABASE_URL"]
+# [env.hints]
+# DATABASE_URL = "cp .env.example .env"
 
 # Kubernetes behavior
 [kubernetes]
