@@ -75,7 +75,11 @@ async fn probe_context(runner: &SharedRunner, timeout: Duration) -> Diagnostic {
     }
 }
 
-async fn probe_namespace(runner: &SharedRunner, timeout: Duration) -> Option<String> {
+/// `Ok(None)` means the context sets no namespace, so kubectl uses `default`.
+async fn probe_namespace(
+    runner: &SharedRunner,
+    timeout: Duration,
+) -> Result<Option<String>, CommandFailure> {
     let out = runner
         .run(
             "kubectl",
@@ -88,21 +92,24 @@ async fn probe_namespace(runner: &SharedRunner, timeout: Duration) -> Option<Str
             ],
             timeout,
         )
-        .await
-        .ok()?;
-    trimmed_stdout(&out)
+        .await?;
+    Ok(trimmed_stdout(&out))
 }
 
-fn namespace_diagnostic(ns: Option<String>, config: &Config) -> Diagnostic {
-    match ns {
-        Some(n) if n == "default" && config.kubernetes.warn_default_namespace => {
-            Diagnostic::warning(
-                "Namespace",
-                "default (consider using a dedicated namespace)",
-            )
-        }
-        Some(n) => Diagnostic::healthy("Namespace", n),
-        None => Diagnostic::healthy("Namespace", "default"),
+fn namespace_diagnostic(ns: Result<Option<String>, CommandFailure>, config: &Config) -> Diagnostic {
+    let (ns, implicit) = match ns {
+        Ok(Some(n)) => (n, false),
+        Ok(None) => ("default".to_string(), true),
+        Err(e) => return Diagnostic::warning("Namespace", e.to_string()),
+    };
+    if ns == "default" && config.kubernetes.warn_default_namespace {
+        let source = if implicit { ", not set in context" } else { "" };
+        Diagnostic::warning(
+            "Namespace",
+            format!("default{source} (consider using a dedicated namespace)"),
+        )
+    } else {
+        Diagnostic::healthy("Namespace", ns)
     }
 }
 
@@ -146,6 +153,49 @@ mod tests {
             }
         }"#;
         assert_eq!(parse_kubectl_version_json(json).as_deref(), Some("1.34.0"));
+    }
+
+    use crate::models::Status;
+
+    fn ns_status(ns: Result<Option<String>, CommandFailure>, warn: bool) -> Diagnostic {
+        let mut config = Config::default();
+        config.kubernetes.warn_default_namespace = warn;
+        namespace_diagnostic(ns, &config)
+    }
+
+    #[test]
+    fn implicit_default_namespace_warns() {
+        let d = ns_status(Ok(None), true);
+        assert_eq!(d.status, Status::Warning);
+        assert!(d.message.contains("not set in context"), "{}", d.message);
+    }
+
+    #[test]
+    fn explicit_default_namespace_warns() {
+        assert_eq!(
+            ns_status(Ok(Some("default".into())), true).status,
+            Status::Warning
+        );
+    }
+
+    #[test]
+    fn default_namespace_is_healthy_when_warning_disabled() {
+        assert_eq!(ns_status(Ok(None), false).status, Status::Healthy);
+    }
+
+    #[test]
+    fn dedicated_namespace_is_healthy() {
+        let d = ns_status(Ok(Some("payments".into())), true);
+        assert_eq!(d.status, Status::Healthy);
+        assert_eq!(d.message, "payments");
+    }
+
+    #[test]
+    fn namespace_probe_failure_warns() {
+        assert_eq!(
+            ns_status(Err(CommandFailure::Timeout), true).status,
+            Status::Warning
+        );
     }
 
     #[test]
