@@ -20,7 +20,7 @@ cargo test --test cli                # only the integration tests in tests/cli.r
 cargo test diagnostics::docker       # tests in one module
 ```
 
-Clippy runs with `-D warnings`, so any warning fails `make check`.
+Clippy runs with `-D warnings`, so any warning fails `make check`. CI (`.github/workflows/ci.yml`) runs `make check` on Ubuntu and macOS for pushes to main and every PR.
 
 ## Architecture
 
