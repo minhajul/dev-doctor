@@ -1,8 +1,14 @@
-//! User configuration.
+//! User and project configuration.
 //!
-//! Loaded from `~/.config/devdoctor/config.toml`. If the file is missing the
-//! defaults below are used. If the file is present but malformed the load
-//! returns an error so the user sees a useful message.
+//! Two optional layers are merged, later layers winning key-by-key:
+//!
+//! 1. the user config at `~/.config/devdoctor/config.toml`;
+//! 2. a project config, `devdoctor.toml`, found in the current directory or
+//!    the nearest ancestor that has one.
+//!
+//! Missing files are skipped and the defaults below fill any gaps. A file
+//! that is present but malformed returns an error so the user sees a useful
+//! message.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -160,31 +166,96 @@ fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
+/// File name of the per-project config.
+pub const PROJECT_CONFIG_FILE: &str = "devdoctor.toml";
+
+/// Find `devdoctor.toml` in `start` or the nearest ancestor directory.
+pub fn find_project_config(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .map(|dir| dir.join(PROJECT_CONFIG_FILE))
+        .find(|p| p.is_file())
+}
+
 /// Load the configuration from `path`.
 ///
 /// If `path` does not exist, returns [`Config::default`]. I/O and parse
 /// failures surface as [`ConfigError`].
+#[cfg(test)]
 pub fn load_from(path: &Path) -> Result<Config, ConfigError> {
-    match fs::read_to_string(path) {
-        Ok(text) => toml::from_str(&text).map_err(|source| ConfigError::Parse {
-            path: path.to_path_buf(),
+    load_layered(&[path])
+}
+
+/// Load and merge config files in order; later files override earlier ones
+/// key-by-key (nested tables merge, everything else is replaced). Missing
+/// files are skipped.
+pub fn load_layered(paths: &[&Path]) -> Result<Config, ConfigError> {
+    let mut merged = toml::Table::new();
+    let mut last_path: Option<&Path> = None;
+    for path in paths {
+        if let Some(table) = read_table(path)? {
+            merge_tables(&mut merged, table);
+            last_path = Some(path);
+        }
+    }
+    let Some(last_path) = last_path else {
+        return Ok(Config::default());
+    };
+    toml::Value::Table(merged)
+        .try_into()
+        .map_err(|source| ConfigError::Parse {
+            path: last_path.to_path_buf(),
             source,
-        }),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-        Err(source) => Err(ConfigError::Io {
-            path: path.to_path_buf(),
-            source,
-        }),
+        })
+}
+
+/// Read `path` as a TOML table, validating it against [`Config`] on its own
+/// so errors point at the file that caused them.
+fn read_table(path: &Path) -> Result<Option<toml::Table>, ConfigError> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(ConfigError::Io {
+                path: path.to_path_buf(),
+                source,
+            })
+        }
+    };
+    let parse_err = |source| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source,
+    };
+    toml::from_str::<Config>(&text).map_err(parse_err)?;
+    toml::from_str::<toml::Table>(&text)
+        .map(Some)
+        .map_err(parse_err)
+}
+
+fn merge_tables(base: &mut toml::Table, overlay: toml::Table) {
+    for (key, value) in overlay {
+        match (base.get_mut(&key), value) {
+            (Some(toml::Value::Table(b)), toml::Value::Table(o)) => merge_tables(b, o),
+            (_, value) => {
+                base.insert(key, value);
+            }
+        }
     }
 }
 
-/// Load the configuration from the default location, falling back to defaults
-/// if no file exists.
+/// Load the user config, then overlay the project config found from the
+/// current directory. Falls back to defaults if neither exists.
 pub fn load_default() -> Result<Config, ConfigError> {
-    match default_config_path() {
-        Some(p) => load_from(&p),
-        None => Ok(Config::default()),
-    }
+    let user = default_config_path();
+    let project = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| find_project_config(&cwd));
+    let paths: Vec<&Path> = user
+        .iter()
+        .chain(project.iter())
+        .map(PathBuf::as_path)
+        .collect();
+    load_layered(&paths)
 }
 
 #[cfg(test)]
@@ -247,6 +318,48 @@ warn_default_namespace = false
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "this is not = valid = toml ==").expect("write");
         assert!(load_from(&path).is_err());
+    }
+
+    #[test]
+    fn project_config_overrides_user_config_per_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let user = dir.path().join("user.toml");
+        let project = dir.path().join("devdoctor.toml");
+        std::fs::write(
+            &user,
+            "timeout_seconds = 9\n[tools]\nenabled = [\"git\"]\n[ports]\ncheck = [1]\n",
+        )
+        .expect("write");
+        std::fs::write(&project, "[tools]\nenabled = [\"go\"]\n").expect("write");
+
+        let c = load_layered(&[&user, &project]).expect("load");
+        assert_eq!(c.timeout_seconds, 9);
+        assert_eq!(c.resolved_tools(), vec!["go"]);
+        assert_eq!(c.resolved_ports(), vec![1]);
+    }
+
+    #[test]
+    fn layered_error_names_the_bad_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let user = dir.path().join("user.toml");
+        let project = dir.path().join("devdoctor.toml");
+        std::fs::write(&user, "timeout_seconds = 3\n").expect("write");
+        std::fs::write(&project, "timeout_seconds = \"soon\"\n").expect("write");
+
+        let err = load_layered(&[&user, &project]).expect_err("should fail");
+        assert!(err.to_string().contains("devdoctor.toml"), "{err}");
+    }
+
+    #[test]
+    fn find_project_config_walks_up() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let nested = dir.path().join("a").join("b");
+        std::fs::create_dir_all(&nested).expect("mkdir");
+        assert_eq!(find_project_config(&nested), None);
+
+        let file = dir.path().join("a").join(PROJECT_CONFIG_FILE);
+        std::fs::write(&file, "").expect("write");
+        assert_eq!(find_project_config(&nested), Some(file));
     }
 
     #[test]

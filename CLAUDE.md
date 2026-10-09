@@ -36,7 +36,7 @@ Flow: `main.rs` parses args (`cli.rs`), loads config (`config.rs`), builds a `Sh
 1. New file under `src/diagnostics/` with a `collect` fn.
 2. Add a `Category` variant in `cli.rs` (and `as_str`), plus `label()`, `dispatch()`, and `Category::all()` (update the array length) in `diagnostics/mod.rs`.
 3. If it should have a shortcut subcommand, add a `Command` variant in `cli.rs` and a match arm in `main.rs::run`.
-4. Any new config section goes in `config.rs` with serde defaults so a missing/partial config file still works; mirror it in `config.example.toml`.
+4. Any new config section goes in `config.rs`; mirror it in `config.example.toml`.
 
 ## Testing
 
@@ -46,6 +46,6 @@ Flow: `main.rs` parses args (`cli.rs`), loads config (`config.rs`), builds a `Sh
 
 ## Configuration
 
-User config is optional at `~/.config/devdoctor/config.toml` (see `config.example.toml`; defaults in `config.rs`: `DEFAULT_TOOLS`, `DEFAULT_PORTS`, `DEFAULT_TIMEOUT_SECONDS`). Missing file → defaults; malformed file → error (exit 2).
+Two optional layers, merged as raw TOML tables before deserializing into `Config` (`config::load_layered`): the user config at `~/.config/devdoctor/config.toml` (or `$XDG_CONFIG_HOME`), then a project `devdoctor.toml` found by walking up from the cwd. Nested tables merge; scalars and arrays from the later layer replace. Each file is also validated on its own so parse errors name the offending file. Defaults live in `config.rs` (`DEFAULT_TOOLS`, `DEFAULT_PORTS`, `DEFAULT_TIMEOUT_SECONDS`); see `config.example.toml`. Missing files → defaults; malformed file → error (exit 2). New config fields need serde defaults so partial files keep working.
 
 Output colors honor `--no-color`, `NO_COLOR`, and TTY detection; JSON output must never contain ANSI codes.

@@ -45,7 +45,8 @@ Healthy: 8    Warnings: 2    Failed: 1
 - Colorized terminal output, `NO_COLOR`-aware.
 - JSON output for CI (`devdoctor check --json`).
 - Read-only by design: no secret material is ever printed.
-- Configurable via `~/.config/devdoctor/config.toml`.
+- Configurable via `~/.config/devdoctor/config.toml`, plus a per-project
+  `devdoctor.toml` you can commit to a repo.
 
 ## Installation
 
@@ -127,6 +128,19 @@ warn_default_namespace = true
 
 If the file is missing, defaults are used. A malformed file produces a clear
 error.
+
+### Project config
+
+Commit a `devdoctor.toml` to a repository to describe what *that project*
+needs. `devdoctor` looks for it in the current directory and then each parent
+directory, and merges it over the user config key by key: nested tables merge,
+and any value the project sets (including lists) replaces the user's.
+
+```toml
+# devdoctor.toml at the repo root
+[tools]
+enabled = ["git", "go", "docker"]
+```
 
 ## Exit codes
 
