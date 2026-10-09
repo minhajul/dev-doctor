@@ -326,4 +326,4 @@ becomes a new file under `src/diagnostics/` plus a `Category` variant.
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
