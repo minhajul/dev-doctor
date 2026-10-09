@@ -12,6 +12,7 @@ mod config;
 mod diagnostics;
 mod models;
 mod output;
+mod version;
 
 use cli::{Category, Cli, Command};
 use command::default_runner;
@@ -79,6 +80,7 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         ),
         Some(Command::Aws) => (vec![Category::Aws.dispatch(runner, config).await], false),
         Some(Command::Ports) => (vec![Category::Ports.dispatch(runner, config).await], false),
+        Some(Command::Env) => (vec![Category::Env.dispatch(runner, config).await], false),
     };
 
     let report = Report::from_groups(groups);

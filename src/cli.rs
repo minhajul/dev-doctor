@@ -66,6 +66,10 @@ pub enum Command {
     #[command(visible_alias = "p")]
     Ports,
 
+    /// Run only the required environment variable diagnostics.
+    #[command(visible_alias = "e")]
+    Env,
+
     /// Print version information.
     Version,
 }
@@ -80,6 +84,7 @@ pub enum Category {
     Kubernetes,
     Aws,
     Ports,
+    Env,
 }
 
 #[allow(dead_code)]
@@ -93,6 +98,7 @@ impl Category {
             Category::Kubernetes => "kubernetes",
             Category::Aws => "aws",
             Category::Ports => "ports",
+            Category::Env => "env",
         }
     }
 }
@@ -160,6 +166,7 @@ mod tests {
         assert_eq!(Category::Kubernetes.as_str(), "kubernetes");
         assert_eq!(Category::Aws.as_str(), "aws");
         assert_eq!(Category::Ports.as_str(), "ports");
+        assert_eq!(Category::Env.as_str(), "env");
     }
 
     #[test]

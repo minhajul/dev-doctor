@@ -7,6 +7,7 @@
 
 pub mod aws;
 pub mod docker;
+pub mod env;
 pub mod kubernetes;
 pub mod ports;
 pub mod system;
@@ -30,6 +31,7 @@ impl Category {
             Category::Kubernetes => "Kubernetes",
             Category::Aws => "AWS",
             Category::Ports => "Ports",
+            Category::Env => "Environment",
         }
     }
 
@@ -42,6 +44,7 @@ impl Category {
             Category::Kubernetes => kubernetes::collect(runner, config).await,
             Category::Aws => aws::collect(runner, config).await,
             Category::Ports => ports::collect(runner, config).await,
+            Category::Env => env::collect(config).await,
         }
     }
 }
@@ -56,7 +59,11 @@ pub async fn run_categories(
     categories: &[Category],
 ) -> Vec<DiagnosticGroup> {
     let order: Vec<Category> = if categories.is_empty() {
-        Category::all().to_vec()
+        // Env has nothing to report unless variables are configured.
+        Category::all()
+            .into_iter()
+            .filter(|c| *c != Category::Env || !config.env.required.is_empty())
+            .collect()
     } else {
         Category::all()
             .into_iter()
@@ -93,7 +100,7 @@ pub async fn run_categories(
 /// Canonical execution order. Used both as the default fan-out order and
 /// when filtering a user-supplied category list.
 impl Category {
-    pub fn all() -> [Category; 6] {
+    pub fn all() -> [Category; 7] {
         [
             Category::System,
             Category::Tools,
@@ -101,6 +108,7 @@ impl Category {
             Category::Kubernetes,
             Category::Aws,
             Category::Ports,
+            Category::Env,
         ]
     }
 }
@@ -117,10 +125,29 @@ mod tests {
         assert_eq!(Category::Kubernetes.label(), "Kubernetes");
         assert_eq!(Category::Aws.label(), "AWS");
         assert_eq!(Category::Ports.label(), "Ports");
+        assert_eq!(Category::Env.label(), "Environment");
     }
 
     #[test]
     fn category_all_includes_every_variant() {
-        assert_eq!(Category::all().len(), 6);
+        assert_eq!(Category::all().len(), 7);
+    }
+
+    #[tokio::test]
+    async fn env_group_is_skipped_unless_configured() {
+        let runner: SharedRunner = Arc::new(crate::command::FakeRunner::new());
+        let names = |groups: Vec<DiagnosticGroup>| -> Vec<String> {
+            groups.into_iter().map(|g| g.name).collect()
+        };
+
+        let mut config = Config::default();
+        config.tools.enabled = Some(Vec::new());
+        config.ports.check = Some(Vec::new());
+        let groups = run_categories(runner.clone(), Arc::new(config.clone()), &[]).await;
+        assert!(!names(groups).contains(&"Environment".to_string()));
+
+        config.env.required = vec!["PATH".to_string()];
+        let groups = run_categories(runner, Arc::new(config), &[]).await;
+        assert!(names(groups).contains(&"Environment".to_string()));
     }
 }

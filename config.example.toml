@@ -24,9 +24,23 @@ enabled = [
     "aws",
 ]
 
+# Optional version requirements per tool (>=, >, <=, <, =; comma-separated).
+# A bare version matches by prefix, so "1.9" accepts any 1.9.x.
+# [tools.versions]
+# node = ">=20"
+# go = ">=1.22, <2"
+
 # Ports to probe (TCP listen check)
 [ports]
 check = [3000, 3306, 5432, 6379, 8000, 8080, 9000]
+# Fail if nothing is listening on these ports (e.g. a local database)
+# expect_listening = [5432]
+# Fail if these ports are already taken (e.g. the dev server port)
+# expect_free = [3000]
+
+# Environment variables that must be set (values are never printed)
+# [env]
+# required = ["DATABASE_URL"]
 
 # Kubernetes behavior
 [kubernetes]

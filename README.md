@@ -26,7 +26,7 @@ Tools
 AWS
 ✓ AWS CLI       2.31.0
 ✓ Region        ap-southeast-1
-⚠ Credentials   not configured
+✓ Credentials   configured
 ✓ Caller        account=123456789012 arn=arn:aws:iam::123456789012:user/me
 
 Ports
@@ -40,12 +40,14 @@ Healthy: 8    Warnings: 2    Failed: 1
 ## Features
 
 - Cross-platform: macOS and Linux.
-- Diagnostic categories: system, tools, Docker, Kubernetes, AWS, ports.
+- Diagnostic categories: system, tools, Docker, Kubernetes, AWS, ports,
+  required environment variables.
 - Concurrent execution with per-command timeouts (no hangs).
 - Colorized terminal output, `NO_COLOR`-aware.
 - JSON output for CI (`devdoctor check --json`).
 - Read-only by design: no secret material is ever printed.
-- Configurable via `~/.config/devdoctor/config.toml`.
+- Configurable via `~/.config/devdoctor/config.toml`, plus a per-project
+  `devdoctor.toml` you can commit to a repo.
 
 ## Installation
 
@@ -81,6 +83,7 @@ devdoctor check --category docker
 devdoctor check --category kubernetes
 devdoctor check --category aws
 devdoctor check --category ports
+devdoctor check --category env
 
 # shortcut subcommands
 devdoctor tools
@@ -88,6 +91,7 @@ devdoctor docker
 devdoctor kubernetes
 devdoctor aws
 devdoctor ports
+devdoctor env
 
 # JSON output
 devdoctor check --json
@@ -127,6 +131,52 @@ warn_default_namespace = true
 
 If the file is missing, defaults are used. A malformed file produces a clear
 error.
+
+### Project config
+
+Commit a `devdoctor.toml` to a repository to describe what *that project*
+needs. `devdoctor` looks for it in the current directory and then each parent
+directory, and merges it over the user config key by key: nested tables merge,
+and any value the project sets (including lists) replaces the user's.
+
+```toml
+# devdoctor.toml at the repo root
+[tools]
+enabled = ["git", "go", "docker"]
+
+# Minimum (or exact) versions. Tools listed here are checked even if they
+# are not in `enabled`.
+[tools.versions]
+go = ">=1.22"
+node = ">=20, <23"
+terraform = "1.9"      # bare or `=` version matches by prefix: 1.9.x
+```
+
+A tool whose version doesn't meet its requirement is reported as failed, e.g.
+`✗ node  18.19.1 (requires >=20, <23)`. Supported operators are `>=`, `>`,
+`<=`, `<` and `=`; combine several with commas.
+
+Ports can carry an expectation. By default a port is reported either way
+(in use or available) without failing; with an expectation, the wrong state
+fails:
+
+```toml
+[ports]
+expect_listening = [5432, 6379]   # Postgres and Redis must be running
+expect_free = [3000]              # the dev server needs this port
+```
+
+When only expectations are set, the default port list is not probed. Add
+`check = [...]` to probe other ports for information.
+
+Required environment variables are checked for presence only; their values
+are never read into the report. An empty value is a warning, a missing one a
+failure. The Environment section only appears when this list is set.
+
+```toml
+[env]
+required = ["DATABASE_URL", "STRIPE_API_KEY"]
+```
 
 ## Exit codes
 

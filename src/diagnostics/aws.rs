@@ -7,7 +7,7 @@ use tokio::join;
 
 use crate::command::{CommandFailure, SharedRunner};
 use crate::config::Config;
-use crate::models::{Diagnostic, DiagnosticGroup};
+use crate::models::{Diagnostic, DiagnosticGroup, Status};
 
 pub async fn collect(runner: SharedRunner, config: Arc<Config>) -> DiagnosticGroup {
     let timeout = config.timeout();
@@ -24,11 +24,28 @@ pub async fn collect(runner: SharedRunner, config: Arc<Config>) -> DiagnosticGro
         probe_sts(&runner, timeout),
     );
 
+    assemble(cli, region, sts)
+}
+
+/// If the CLI itself can't run, the other probes only repeat its error, so
+/// report the CLI alone. Caller is shown only when STS succeeded; otherwise
+/// Credentials already explains why.
+fn assemble(
+    cli: Diagnostic,
+    region: Diagnostic,
+    sts: Result<String, CommandFailure>,
+) -> DiagnosticGroup {
     let mut group = DiagnosticGroup::new("AWS");
+    let cli_ok = cli.status == Status::Healthy;
     group.push(cli);
+    if !cli_ok {
+        return group;
+    }
     group.push(region);
     group.push(credentials_diagnostic(&sts));
-    group.push(caller_diagnostic(&sts));
+    if let Some(caller) = caller_diagnostic(&sts) {
+        group.push(caller);
+    }
     group
 }
 
@@ -80,14 +97,12 @@ fn credentials_diagnostic(sts: &Result<String, CommandFailure>) -> Diagnostic {
     }
 }
 
-fn caller_diagnostic(sts: &Result<String, CommandFailure>) -> Diagnostic {
-    match sts {
-        Ok(stdout) => match parse_caller_identity(stdout) {
-            Some(summary) => Diagnostic::healthy("Caller", summary),
-            None => Diagnostic::healthy("Caller", "unknown"),
-        },
-        Err(_) => Diagnostic::healthy("Caller", "unavailable"),
-    }
+fn caller_diagnostic(sts: &Result<String, CommandFailure>) -> Option<Diagnostic> {
+    let stdout = sts.as_ref().ok()?;
+    Some(match parse_caller_identity(stdout) {
+        Some(summary) => Diagnostic::healthy("Caller", summary),
+        None => Diagnostic::warning("Caller", "could not parse STS response"),
+    })
 }
 
 /// `aws-cli/2.31.0` -> `Some("2.31.0")`.
@@ -123,6 +138,51 @@ mod tests {
             extract_aws_version("aws-cli/2.31.0 Python/3.12.0 Darwin/24.0.0 botocore/2.31.0"),
             Some("2.31.0".into())
         );
+    }
+
+    fn names(group: &DiagnosticGroup) -> Vec<&str> {
+        group.diagnostics.iter().map(|d| d.name.as_str()).collect()
+    }
+
+    #[test]
+    fn broken_cli_reports_only_the_cli() {
+        let err = CommandFailure::Io("Bad CPU type in executable (os error 86)".into());
+        let group = assemble(
+            Diagnostic::failed("AWS CLI", err.to_string()),
+            Diagnostic::warning("Region", err.to_string()),
+            Err(err),
+        );
+        assert_eq!(names(&group), vec!["AWS CLI"]);
+        assert_eq!(group.failed_count(), 1);
+    }
+
+    #[test]
+    fn failed_sts_omits_caller() {
+        let group = assemble(
+            Diagnostic::healthy("AWS CLI", "2.31.0"),
+            Diagnostic::healthy("Region", "eu-west-1"),
+            Err(CommandFailure::NonZeroExit {
+                status: 255,
+                stderr: "Unable to locate credentials".into(),
+            }),
+        );
+        assert_eq!(names(&group), vec!["AWS CLI", "Region", "Credentials"]);
+        assert_eq!(group.diagnostics[2].status, Status::Warning);
+    }
+
+    #[test]
+    fn successful_sts_shows_caller() {
+        let json = r#"{"Account":"123456789012","Arn":"arn:aws:iam::123456789012:user/me"}"#;
+        let group = assemble(
+            Diagnostic::healthy("AWS CLI", "2.31.0"),
+            Diagnostic::healthy("Region", "eu-west-1"),
+            Ok(json.into()),
+        );
+        assert_eq!(
+            names(&group),
+            vec!["AWS CLI", "Region", "Credentials", "Caller"]
+        );
+        assert_eq!(group.healthy_count(), 4);
     }
 
     #[test]
