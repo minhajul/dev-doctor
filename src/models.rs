@@ -46,6 +46,9 @@ pub struct Diagnostic {
     pub name: String,
     pub status: Status,
     pub message: String,
+    /// Suggested next step, shown under warnings and failures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 impl Diagnostic {
@@ -55,6 +58,7 @@ impl Diagnostic {
             name: name.into(),
             status: Status::Healthy,
             message: message.into(),
+            hint: None,
         }
     }
 
@@ -64,6 +68,7 @@ impl Diagnostic {
             name: name.into(),
             status: Status::Warning,
             message: message.into(),
+            hint: None,
         }
     }
 
@@ -73,7 +78,14 @@ impl Diagnostic {
             name: name.into(),
             status: Status::Failed,
             message: message.into(),
+            hint: None,
         }
+    }
+
+    /// Attach a suggested next step.
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
     }
 }
 
@@ -222,6 +234,16 @@ mod tests {
 
         let s = Summary::from_groups(&[g]);
         assert_eq!(s.exit_code(), 1);
+    }
+
+    #[test]
+    fn hint_is_omitted_from_json_when_absent() {
+        let json = serde_json::to_string(&Diagnostic::healthy("git", "2.51.0")).expect("json");
+        assert!(!json.contains("hint"), "{json}");
+
+        let d = Diagnostic::failed("docker", "not found").with_hint("install Docker");
+        let json = serde_json::to_string(&d).expect("json");
+        assert!(json.contains(r#""hint":"install Docker""#), "{json}");
     }
 
     #[test]

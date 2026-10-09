@@ -63,13 +63,16 @@ async fn probe_port(port: u16, expect: Expect) -> Diagnostic {
                 None => "in use".to_string(),
             };
             if expect == Expect::Free {
-                Diagnostic::failed(name, format!("{msg}, expected free"))
+                Diagnostic::failed(name, format!("{msg}, expected free")).with_hint(format!(
+                    "stop whatever owns it (`lsof -iTCP:{port} -sTCP:LISTEN` shows the process)"
+                ))
             } else {
                 Diagnostic::healthy(name, msg)
             }
         }
         Err(_) if expect == Expect::Listening => {
             Diagnostic::failed(name, "nothing listening, expected a service")
+                .with_hint(format!("start the service that should listen on :{port}"))
         }
         Err(_) => Diagnostic::healthy(name, "available".to_string()),
     }

@@ -9,7 +9,9 @@ use tokio::join;
 
 use crate::command::{CommandFailure, SharedRunner};
 use crate::config::Config;
-use crate::diagnostics::util::{count_nonblank_lines, first_nonempty_line, first_version_token};
+use crate::diagnostics::util::{
+    count_nonblank_lines, failure_hint, first_nonempty_line, first_version_token,
+};
 use crate::models::{Diagnostic, DiagnosticGroup};
 
 pub async fn collect(runner: SharedRunner, config: Arc<Config>) -> DiagnosticGroup {
@@ -48,10 +50,20 @@ async fn probe_cli(runner: &SharedRunner, timeout: Duration) -> Diagnostic {
                 .unwrap_or_else(|| "installed".to_string());
             Diagnostic::healthy("Docker CLI", v)
         }
-        Err(CommandFailure::NotFound) => Diagnostic::failed("Docker CLI", "not found"),
-        Err(e) => Diagnostic::failed("Docker CLI", e.to_string()),
+        Err(CommandFailure::NotFound) => Diagnostic::failed("Docker CLI", "not found")
+            .with_hint("install Docker Desktop, OrbStack, or Colima"),
+        Err(e) => {
+            let diag = Diagnostic::failed("Docker CLI", e.to_string());
+            match failure_hint(&e) {
+                Some(h) => diag.with_hint(h),
+                None => diag,
+            }
+        }
     }
 }
+
+const START_DAEMON: &str =
+    "start your Docker runtime (Docker Desktop, OrbStack, or `colima start`)";
 
 async fn probe_daemon(runner: &SharedRunner, timeout: Duration) -> Diagnostic {
     match runner.run("docker", &["info"], timeout).await {
@@ -60,8 +72,11 @@ async fn probe_daemon(runner: &SharedRunner, timeout: Duration) -> Diagnostic {
         Err(CommandFailure::NonZeroExit { stderr, .. }) => {
             let detail = first_nonempty_line(&stderr).unwrap_or_else(|| "unreachable".to_string());
             Diagnostic::failed("Daemon", format!("not reachable ({detail})"))
+                .with_hint(START_DAEMON)
         }
-        Err(CommandFailure::Timeout) => Diagnostic::failed("Daemon", "timed out"),
+        Err(CommandFailure::Timeout) => {
+            Diagnostic::failed("Daemon", "timed out").with_hint(START_DAEMON)
+        }
         Err(CommandFailure::Io(msg)) => Diagnostic::failed("Daemon", msg),
     }
 }
@@ -74,7 +89,7 @@ async fn probe_compose(runner: &SharedRunner, timeout: Duration) -> Diagnostic {
             None => return Diagnostic::warning("Compose", "installed (version unknown)"),
         },
         Err(CommandFailure::NotFound) => {
-            return Diagnostic::warning("Compose", "not installed");
+            return Diagnostic::warning("Compose", "not installed").with_hint(INSTALL_COMPOSE);
         }
         Err(_) => { /* fall through to docker-compose probe */ }
     }
@@ -84,9 +99,11 @@ async fn probe_compose(runner: &SharedRunner, timeout: Duration) -> Diagnostic {
             Some(v) => Diagnostic::healthy("Compose", v),
             None => Diagnostic::warning("Compose", "installed (version unknown)"),
         },
-        Err(_) => Diagnostic::warning("Compose", "not installed"),
+        Err(_) => Diagnostic::warning("Compose", "not installed").with_hint(INSTALL_COMPOSE),
     }
 }
+
+const INSTALL_COMPOSE: &str = "install the Docker Compose plugin";
 
 /// Best-effort container/image counts. Zeros on any error so the rest of
 /// the report stays usable.

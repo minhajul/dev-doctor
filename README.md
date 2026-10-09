@@ -22,6 +22,7 @@ Tools
 ✓ docker        28.1.0
 ⚠ node          installed but version probe failed: exit status 1
 ✗ postgres      not found
+                → install postgres or add it to your PATH
 
 AWS
 ✓ AWS CLI       2.31.0
@@ -30,11 +31,12 @@ AWS
 ✓ Caller        account=123456789012 arn=arn:aws:iam::123456789012:user/me
 
 Ports
-✓ :3000         available
-✗ :6379         in use (redis-server)
+✗ :3000         in use (node), expected free
+                → stop whatever owns it (`lsof -iTCP:3000 -sTCP:LISTEN` shows the process)
+✓ :6379         in use (redis-server)
 
 Summary
-Healthy: 8    Warnings: 2    Failed: 1
+Healthy: 12    Warnings: 1    Failed: 2
 ```
 
 ## Features
@@ -44,6 +46,7 @@ Healthy: 8    Warnings: 2    Failed: 1
   required environment variables.
 - Concurrent execution with per-command timeouts (no hangs).
 - Colorized terminal output, `NO_COLOR`-aware.
+- Every warning and failure comes with a hint for what to do next.
 - JSON output for CI (`devdoctor check --json`).
 - Read-only by design: no secret material is ever printed.
 - Configurable via `~/.config/devdoctor/config.toml`, plus a per-project
@@ -202,7 +205,12 @@ devdoctor check --json
       "name": "Tools",
       "diagnostics": [
         { "name": "git", "status": "healthy", "message": "2.51.0" },
-        { "name": "docker", "status": "failed", "message": "not found" }
+        {
+          "name": "docker",
+          "status": "failed",
+          "message": "not found",
+          "hint": "install docker or add it to your PATH"
+        }
       ]
     }
   ],
@@ -215,7 +223,8 @@ JSON output is always free of ANSI escape codes.
 ### Diagnostic model
 
 Every check is a `Diagnostic` carrying a `Status` (`Healthy` / `Warning` /
-`Failed`) and a message. Diagnostics are grouped by category
+`Failed`), a message, and an optional `hint` (the suggested next step, shown
+under warnings and failures and omitted from JSON when absent). Diagnostics are grouped by category
 (`DiagnosticGroup`) and aggregated into a `Report` with a `Summary`. The
 `Summary` decides the exit code.
 

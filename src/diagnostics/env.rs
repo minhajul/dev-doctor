@@ -18,9 +18,13 @@ fn collect_with(required: &[String], lookup: impl Fn(&str) -> Option<OsString>) 
     let mut group = DiagnosticGroup::new("Environment");
     for name in required {
         let diag = match lookup(name) {
-            Some(v) if v.is_empty() => Diagnostic::warning(name, "set but empty"),
+            Some(v) if v.is_empty() => {
+                Diagnostic::warning(name, "set but empty").with_hint(format!("give {name} a value"))
+            }
             Some(_) => Diagnostic::healthy(name, "set"),
-            None => Diagnostic::failed(name, "not set"),
+            None => Diagnostic::failed(name, "not set").with_hint(format!(
+                "export {name}=... in your shell, or add it to the project's env file"
+            )),
         };
         group.push(diag);
     }
