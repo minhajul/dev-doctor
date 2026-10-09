@@ -54,6 +54,21 @@ Healthy: 12    Warnings: 1    Failed: 2
 
 ## Installation
 
+### Prebuilt binaries
+
+Each [release](https://github.com/minhajul/dev-doctor/releases) has archives
+for macOS (Apple Silicon, Intel) and Linux (x86_64, ARM64; static musl
+builds), each with a `.sha256` checksum.
+
+```sh
+gh release download --repo minhajul/dev-doctor --pattern '*aarch64-apple-darwin.tar.gz'
+tar xzf devdoctor-*.tar.gz
+mv devdoctor-*/devdoctor ~/.local/bin/   # or anywhere on your $PATH
+```
+
+The macOS binaries aren't signed. If you download one with a browser, clear
+the quarantine flag before running it: `xattr -d com.apple.quarantine devdoctor`.
+
 ### From source
 
 ```sh
@@ -281,6 +296,17 @@ make run         # cargo run
 make install     # cargo install --path .
 make clean       # cargo clean
 ```
+
+### Releasing
+
+1. Bump `version` in `Cargo.toml` and commit.
+2. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`.
+
+The Release workflow checks that the tag matches `Cargo.toml`, builds all
+four targets, and publishes a GitHub Release with generated notes. Tags with a
+suffix (`v0.2.0-rc.1`) become pre-releases. Run the workflow manually from the
+Actions tab to build the artifacts without releasing; PRs that change
+`release.yml` do the same.
 
 ## Roadmap
 
