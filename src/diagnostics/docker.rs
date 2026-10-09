@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::diagnostics::util::{
     count_nonblank_lines, failure_hint, first_nonempty_line, first_version_token,
 };
-use crate::models::{Diagnostic, DiagnosticGroup};
+use crate::models::{Diagnostic, DiagnosticGroup, Status};
 
 pub async fn collect(runner: SharedRunner, config: Arc<Config>) -> DiagnosticGroup {
     let timeout = config.timeout();
@@ -26,20 +26,43 @@ pub async fn collect(runner: SharedRunner, config: Arc<Config>) -> DiagnosticGro
         container_counts(&runner, timeout),
     );
 
+    assemble(cli, daemon, compose, counts)
+}
+
+type Counts = (Option<usize>, Option<usize>, Option<usize>);
+
+/// If the CLI can't run, the other probes only repeat its error, so report
+/// the CLI alone. Container and image counts need a reachable daemon, so
+/// they are left out when it isn't.
+fn assemble(
+    cli: Diagnostic,
+    daemon: Diagnostic,
+    compose: Diagnostic,
+    counts: Counts,
+) -> DiagnosticGroup {
     let mut group = DiagnosticGroup::new("Docker");
+    let cli_ok = cli.status == Status::Healthy;
+    let daemon_ok = daemon.status == Status::Healthy;
     group.push(cli);
+    if !cli_ok {
+        return group;
+    }
     group.push(daemon);
     group.push(compose);
+    if !daemon_ok {
+        return group;
+    }
     let (running, stopped, images) = counts;
-    group.push(Diagnostic::healthy(
-        "Running containers",
-        running.to_string(),
-    ));
-    group.push(Diagnostic::healthy(
-        "Stopped containers",
-        stopped.to_string(),
-    ));
-    group.push(Diagnostic::healthy("Images", images.to_string()));
+    for (name, count) in [
+        ("Running containers", running),
+        ("Stopped containers", stopped),
+        ("Images", images),
+    ] {
+        group.push(match count {
+            Some(n) => Diagnostic::healthy(name, n.to_string()),
+            None => Diagnostic::warning(name, "could not be counted"),
+        });
+    }
     group
 }
 
@@ -105,9 +128,8 @@ async fn probe_compose(runner: &SharedRunner, timeout: Duration) -> Diagnostic {
 
 const INSTALL_COMPOSE: &str = "install the Docker Compose plugin";
 
-/// Best-effort container/image counts. Zeros on any error so the rest of
-/// the report stays usable.
-async fn container_counts(runner: &SharedRunner, timeout: Duration) -> (usize, usize, usize) {
+/// Best-effort container/image counts; `None` where a count failed.
+async fn container_counts(runner: &SharedRunner, timeout: Duration) -> Counts {
     let (running, stopped, images) = join!(
         count_cmd(runner, &["ps", "-q"], timeout),
         count_cmd(
@@ -120,11 +142,9 @@ async fn container_counts(runner: &SharedRunner, timeout: Duration) -> (usize, u
     (running, stopped, images)
 }
 
-async fn count_cmd(runner: &SharedRunner, args: &[&str], timeout: Duration) -> usize {
-    match runner.run("docker", args, timeout).await {
-        Ok(out) => count_nonblank_lines(&out.stdout),
-        Err(_) => 0,
-    }
+async fn count_cmd(runner: &SharedRunner, args: &[&str], timeout: Duration) -> Option<usize> {
+    let out = runner.run("docker", args, timeout).await.ok()?;
+    Some(count_nonblank_lines(&out.stdout))
 }
 
 #[cfg(test)]
@@ -132,11 +152,75 @@ mod tests {
     use super::*;
     use crate::command::FakeRunner;
 
+    use crate::command::CommandOutput;
+
+    fn names(group: &DiagnosticGroup) -> Vec<&str> {
+        group.diagnostics.iter().map(|d| d.name.as_str()).collect()
+    }
+
+    fn ok(stdout: &str) -> crate::command::CommandResult {
+        Ok(CommandOutput {
+            stdout: stdout.into(),
+            stderr: String::new(),
+        })
+    }
+
     #[tokio::test]
-    async fn collect_emits_six_diagnostics() {
+    async fn missing_cli_reports_only_the_cli() {
         let runner: SharedRunner = Arc::new(FakeRunner::new());
-        let cfg = Arc::new(Config::default());
-        let group = collect(runner, cfg).await;
+        let group = collect(runner, Arc::new(Config::default())).await;
+        assert_eq!(names(&group), vec!["Docker CLI"]);
+        assert_eq!(group.failed_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn unreachable_daemon_omits_counts() {
+        let fake = FakeRunner::new();
+        fake.program_response(
+            "docker",
+            &["--version"],
+            ok("Docker version 29.4.0, build x"),
+        )
+        .await;
+        fake.program_response(
+            "docker",
+            &["info"],
+            Err(CommandFailure::NonZeroExit {
+                status: 1,
+                stderr: "Cannot connect to the Docker daemon".into(),
+            }),
+        )
+        .await;
+        fake.program_response("docker", &["compose", "version"], ok("v2.30.0"))
+            .await;
+        let group = collect(Arc::new(fake), Arc::new(Config::default())).await;
+        assert_eq!(names(&group), vec!["Docker CLI", "Daemon", "Compose"]);
+        assert_eq!(group.diagnostics[1].status, Status::Failed);
+    }
+
+    #[tokio::test]
+    async fn reachable_daemon_reports_counts() {
+        let fake = FakeRunner::new();
+        fake.program_response(
+            "docker",
+            &["--version"],
+            ok("Docker version 29.4.0, build x"),
+        )
+        .await;
+        fake.program_response("docker", &["info"], ok("Server: ..."))
+            .await;
+        fake.program_response("docker", &["compose", "version"], ok("v2.30.0"))
+            .await;
+        fake.program_response("docker", &["ps", "-q"], ok("a1\nb2\n"))
+            .await;
+        fake.program_response("docker", &["images", "-q"], ok("i1\n"))
+            .await;
+        // `ps -a ... status=exited` is left unprogrammed, so it fails.
+        let group = collect(Arc::new(fake), Arc::new(Config::default())).await;
+
         assert_eq!(group.diagnostics.len(), 6);
+        assert_eq!(group.diagnostics[3].message, "2");
+        assert_eq!(group.diagnostics[4].status, Status::Warning);
+        assert_eq!(group.diagnostics[5].message, "1");
     }
 }
