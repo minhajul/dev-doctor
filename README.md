@@ -26,7 +26,7 @@ Tools
 AWS
 ✓ AWS CLI       2.31.0
 ✓ Region        ap-southeast-1
-⚠ Credentials   not configured
+✓ Credentials   configured
 ✓ Caller        account=123456789012 arn=arn:aws:iam::123456789012:user/me
 
 Ports
