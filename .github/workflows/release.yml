@@ -68,7 +68,7 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = tag ]; then label="$GITHUB_REF_NAME"; else label="dev-${GITHUB_SHA::7}"; fi
           name="devdoctor-${label}-${{ matrix.target }}"
           mkdir "$name"
-          cp "target/${{ matrix.target }}/release/devdoctor" README.md config.example.toml "$name/"
+          cp "target/${{ matrix.target }}/release/devdoctor" README.md LICENSE config.example.toml "$name/"
           tar czf "$name.tar.gz" "$name"
           shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
 
