@@ -81,6 +81,25 @@ pub fn render_text<W: Write>(report: &Report, out: &mut W, mode: ColorMode) -> i
             };
 
             writeln!(out, "{} {}  {}", colored_glyph, colored_name, colored_msg)?;
+
+            if let Some(hint) = diag
+                .hint
+                .as_deref()
+                .filter(|_| diag.status != Status::Healthy)
+            {
+                // Align under the message column: glyph + space + name + two spaces.
+                let indent = " ".repeat(diag.status.glyph().chars().count() + 1 + width + 2);
+                let line = format!("→ {hint}");
+                if use_color {
+                    writeln!(
+                        out,
+                        "{indent}{}",
+                        line.if_supports_color(Stdout, |s| s.dimmed())
+                    )?;
+                } else {
+                    writeln!(out, "{indent}{line}")?;
+                }
+            }
         }
         writeln!(out)?;
     }
@@ -128,6 +147,23 @@ mod tests {
         g.push(Diagnostic::warning("redis", "not reachable"));
         g.push(Diagnostic::failed("postgres", "not found"));
         Report::from_groups(vec![g])
+    }
+
+    #[test]
+    fn hints_render_under_problems_only() {
+        let mut g = DiagnosticGroup::new("Tools");
+        g.push(Diagnostic::healthy("git", "2.51.0").with_hint("never shown"));
+        g.push(Diagnostic::failed("node", "not found").with_hint("brew install node"));
+        let r = Report::from_groups(vec![g]);
+
+        let mut buf = Vec::new();
+        render_text(&r, &mut buf, ColorMode::Never).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(
+            out.contains("✗ node  not found\n        → brew install node\n"),
+            "{out}"
+        );
+        assert!(!out.contains("never shown"));
     }
 
     #[test]

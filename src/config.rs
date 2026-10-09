@@ -138,6 +138,9 @@ impl Config {
                 "port {port} is in both ports.expect_listening and ports.expect_free"
             ));
         }
+        if let Some(key) = self.ports.hints.keys().find(|k| k.parse::<u16>().is_err()) {
+            return Err(format!("ports.hints key {key:?} is not a port number"));
+        }
         Ok(())
     }
 }
@@ -150,6 +153,10 @@ pub struct ToolsConfig {
     /// Version requirements per tool, e.g. `node = ">=20"`.
     #[serde(default)]
     pub versions: BTreeMap<String, VersionReq>,
+
+    /// Project-specific hints per tool, replacing the built-in ones.
+    #[serde(default)]
+    pub hints: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -164,6 +171,10 @@ pub struct PortsConfig {
     /// Ports that must be free (e.g. the port the dev server binds).
     #[serde(default)]
     pub expect_free: Vec<u16>,
+
+    /// Project-specific hints keyed by port number (TOML keys are strings).
+    #[serde(default)]
+    pub hints: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -171,6 +182,10 @@ pub struct EnvConfig {
     /// Environment variables that must be set. Values are never printed.
     #[serde(default)]
     pub required: Vec<String>,
+
+    /// Project-specific hints per variable, replacing the built-in ones.
+    #[serde(default)]
+    pub hints: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -478,6 +493,34 @@ warn_default_namespace = false
         .expect("write");
         let err = load_from(&path).expect_err("should fail");
         assert!(err.to_string().contains("port 80"), "{err}");
+    }
+
+    #[test]
+    fn hints_are_parsed_and_port_keys_validated() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[tools.hints]
+node = "run `nvm use`"
+
+[ports.hints]
+5432 = "docker compose up -d db"
+
+[env.hints]
+DATABASE_URL = "cp .env.example .env"
+"#,
+        )
+        .expect("write");
+        let c = load_from(&path).expect("load");
+        assert_eq!(c.tools.hints["node"], "run `nvm use`");
+        assert_eq!(c.ports.hints["5432"], "docker compose up -d db");
+        assert_eq!(c.env.hints["DATABASE_URL"], "cp .env.example .env");
+
+        std::fs::write(&path, "[ports.hints]\npostgres = \"x\"\n").expect("write");
+        let err = load_from(&path).expect_err("should fail");
+        assert!(err.to_string().contains("not a port number"), "{err}");
     }
 
     #[test]

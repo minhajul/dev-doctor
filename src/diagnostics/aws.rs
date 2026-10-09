@@ -7,6 +7,7 @@ use tokio::join;
 
 use crate::command::{CommandFailure, SharedRunner};
 use crate::config::Config;
+use crate::diagnostics::util::failure_hint;
 use crate::models::{Diagnostic, DiagnosticGroup, Status};
 
 pub async fn collect(runner: SharedRunner, config: Arc<Config>) -> DiagnosticGroup {
@@ -14,7 +15,10 @@ pub async fn collect(runner: SharedRunner, config: Arc<Config>) -> DiagnosticGro
 
     if which::which("aws").is_err() {
         let mut group = DiagnosticGroup::new("AWS");
-        group.push(Diagnostic::failed("AWS CLI", "not found"));
+        group.push(
+            Diagnostic::failed("AWS CLI", "not found")
+                .with_hint("install AWS CLI v2: https://aws.amazon.com/cli/"),
+        );
         return group;
     }
 
@@ -57,9 +61,17 @@ async fn probe_cli(runner: &SharedRunner, timeout: Duration) -> Diagnostic {
                 .unwrap_or_else(|| "installed".to_string());
             Diagnostic::healthy("AWS CLI", v)
         }
-        Err(e) => Diagnostic::failed("AWS CLI", e.to_string()),
+        Err(e) => {
+            let diag = Diagnostic::failed("AWS CLI", e.to_string());
+            match failure_hint(&e) {
+                Some(h) => diag.with_hint(h),
+                None => diag,
+            }
+        }
     }
 }
+
+const SET_REGION: &str = "`aws configure set region <region>` or export AWS_REGION";
 
 async fn probe_region(runner: &SharedRunner, timeout: Duration) -> Diagnostic {
     match runner
@@ -67,10 +79,12 @@ async fn probe_region(runner: &SharedRunner, timeout: Duration) -> Diagnostic {
         .await
     {
         Ok(out) => match out.stdout.trim() {
-            "" => Diagnostic::warning("Region", "not configured"),
+            "" => Diagnostic::warning("Region", "not configured").with_hint(SET_REGION),
             s => Diagnostic::healthy("Region", s.to_string()),
         },
-        Err(CommandFailure::NonZeroExit { .. }) => Diagnostic::warning("Region", "not configured"),
+        Err(CommandFailure::NonZeroExit { .. }) => {
+            Diagnostic::warning("Region", "not configured").with_hint(SET_REGION)
+        }
         Err(CommandFailure::Timeout) => {
             Diagnostic::warning("Region", "configure get region timed out")
         }
@@ -90,6 +104,7 @@ fn credentials_diagnostic(sts: &Result<String, CommandFailure>) -> Diagnostic {
         Ok(_) => Diagnostic::healthy("Credentials", "configured"),
         Err(CommandFailure::NonZeroExit { .. }) => {
             Diagnostic::warning("Credentials", "not configured or invalid")
+                .with_hint("`aws sso login` or `aws configure`")
         }
         Err(CommandFailure::Timeout) => Diagnostic::warning("Credentials", "STS check timed out"),
         Err(CommandFailure::NotFound) => Diagnostic::failed("Credentials", "aws CLI not found"),

@@ -1,6 +1,6 @@
 //! Small shared helpers used by multiple diagnostic modules.
 
-use crate::command::CommandOutput;
+use crate::command::{CommandFailure, CommandOutput};
 
 /// Pull a leading version substring out of a single token.
 ///
@@ -40,6 +40,27 @@ pub(crate) fn extract_leading_version(token: &str) -> Option<String> {
     }
 
     Some(token[digit_start..last_good_end].to_string())
+}
+
+/// A hint for failures that mean the binary itself is unusable, independent
+/// of which tool it is. Currently: a binary built for another CPU
+/// architecture (macOS "Bad CPU type", os error 86; Linux "Exec format
+/// error", os error 8).
+pub(crate) fn failure_hint(err: &CommandFailure) -> Option<String> {
+    let CommandFailure::Io(msg) = err else {
+        return None;
+    };
+    if !(msg.contains("os error 86") || msg.contains("os error 8)")) {
+        return None;
+    }
+    let mut hint = format!(
+        "binary was built for another CPU architecture; reinstall a native {} build",
+        std::env::consts::ARCH
+    );
+    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        hint.push_str(" or install Rosetta: `softwareupdate --install-rosetta`");
+    }
+    Some(hint)
 }
 
 /// Walk whitespace-separated tokens and return the first leading version.
@@ -116,6 +137,20 @@ mod tests {
             Some("1.34.0")
         );
         assert_eq!(first_version_token("no version"), None);
+    }
+
+    #[test]
+    fn failure_hint_detects_wrong_architecture() {
+        let mac = CommandFailure::Io("Bad CPU type in executable (os error 86)".into());
+        let linux = CommandFailure::Io("Exec format error (os error 8)".into());
+        assert!(failure_hint(&mac).unwrap().contains("CPU architecture"));
+        assert!(failure_hint(&linux).is_some());
+        assert!(failure_hint(&CommandFailure::Io(
+            "Permission denied (os error 13)".into()
+        ))
+        .is_none());
+        assert!(failure_hint(&CommandFailure::Io("weird (os error 80)".into())).is_none());
+        assert!(failure_hint(&CommandFailure::Timeout).is_none());
     }
 
     #[test]

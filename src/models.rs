@@ -46,6 +46,9 @@ pub struct Diagnostic {
     pub name: String,
     pub status: Status,
     pub message: String,
+    /// Suggested next step, shown under warnings and failures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 impl Diagnostic {
@@ -55,6 +58,7 @@ impl Diagnostic {
             name: name.into(),
             status: Status::Healthy,
             message: message.into(),
+            hint: None,
         }
     }
 
@@ -64,6 +68,7 @@ impl Diagnostic {
             name: name.into(),
             status: Status::Warning,
             message: message.into(),
+            hint: None,
         }
     }
 
@@ -73,6 +78,21 @@ impl Diagnostic {
             name: name.into(),
             status: Status::Failed,
             message: message.into(),
+            hint: None,
+        }
+    }
+
+    /// Attach a suggested next step.
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
+    }
+
+    /// Replace the hint with a configured one, unless the check passed.
+    pub fn with_configured_hint(self, hint: Option<&String>) -> Self {
+        match hint {
+            Some(h) if self.status != Status::Healthy => self.with_hint(h.clone()),
+            _ => self,
         }
     }
 }
@@ -222,6 +242,35 @@ mod tests {
 
         let s = Summary::from_groups(&[g]);
         assert_eq!(s.exit_code(), 1);
+    }
+
+    #[test]
+    fn hint_is_omitted_from_json_when_absent() {
+        let json = serde_json::to_string(&Diagnostic::healthy("git", "2.51.0")).expect("json");
+        assert!(!json.contains("hint"), "{json}");
+
+        let d = Diagnostic::failed("docker", "not found").with_hint("install Docker");
+        let json = serde_json::to_string(&d).expect("json");
+        assert!(json.contains(r#""hint":"install Docker""#), "{json}");
+    }
+
+    #[test]
+    fn configured_hint_overrides_only_problems() {
+        let custom = "run `nvm use`".to_string();
+        let failed = Diagnostic::failed("node", "18.0.0").with_hint("built-in");
+        assert_eq!(
+            failed.with_configured_hint(Some(&custom)).hint.as_deref(),
+            Some("run `nvm use`")
+        );
+
+        let healthy = Diagnostic::healthy("node", "22.0.0");
+        assert_eq!(healthy.with_configured_hint(Some(&custom)).hint, None);
+
+        let kept = Diagnostic::failed("node", "x").with_hint("built-in");
+        assert_eq!(
+            kept.with_configured_hint(None).hint.as_deref(),
+            Some("built-in")
+        );
     }
 
     #[test]

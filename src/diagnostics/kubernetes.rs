@@ -15,7 +15,7 @@ pub async fn collect(runner: SharedRunner, config: Arc<Config>) -> DiagnosticGro
 
     if which::which("kubectl").is_err() {
         let mut group = DiagnosticGroup::new("Kubernetes");
-        group.push(Diagnostic::failed("kubectl", "not found"));
+        group.push(Diagnostic::failed("kubectl", "not found").with_hint("install kubectl"));
         return group;
     }
 
@@ -69,7 +69,8 @@ async fn probe_context(runner: &SharedRunner, timeout: Duration) -> Diagnostic {
     {
         Ok(out) => match trimmed_stdout(&out) {
             Some(c) => Diagnostic::healthy("Context", c),
-            None => Diagnostic::warning("Context", "no current context"),
+            None => Diagnostic::warning("Context", "no current context")
+                .with_hint("pick one: `kubectl config use-context <name>`"),
         },
         Err(e) => Diagnostic::warning("Context", e.to_string()),
     }
@@ -108,6 +109,7 @@ fn namespace_diagnostic(ns: Result<Option<String>, CommandFailure>, config: &Con
             "Namespace",
             format!("default{source} (consider using a dedicated namespace)"),
         )
+        .with_hint("`kubectl config set-context --current --namespace=<name>`")
     } else {
         Diagnostic::healthy("Namespace", ns)
     }
@@ -116,14 +118,20 @@ fn namespace_diagnostic(ns: Result<Option<String>, CommandFailure>, config: &Con
 async fn probe_cluster(runner: &SharedRunner, timeout: Duration) -> Diagnostic {
     match runner.run("kubectl", &["cluster-info"], timeout).await {
         Ok(_) => Diagnostic::healthy("Cluster", "reachable"),
-        Err(CommandFailure::Timeout) => Diagnostic::failed("Cluster", "connection timed out"),
+        Err(CommandFailure::Timeout) => {
+            Diagnostic::failed("Cluster", "connection timed out").with_hint(START_CLUSTER)
+        }
         Err(CommandFailure::NonZeroExit { stderr, .. }) => {
             let detail = first_nonempty_line(&stderr).unwrap_or_else(|| "unreachable".to_string());
             Diagnostic::warning("Cluster", format!("not reachable ({detail})"))
+                .with_hint(START_CLUSTER)
         }
         Err(e) => Diagnostic::warning("Cluster", e.to_string()),
     }
 }
+
+const START_CLUSTER: &str =
+    "start the cluster for this context, or switch: `kubectl config use-context <name>`";
 
 fn parse_kubectl_version_json(text: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(text).ok()?;

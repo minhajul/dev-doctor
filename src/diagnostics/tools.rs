@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use crate::command::{CommandFailure, SharedRunner};
 use crate::config::Config;
-use crate::diagnostics::util::extract_leading_version;
+use crate::diagnostics::util::{extract_leading_version, failure_hint};
 use crate::models::{Diagnostic, DiagnosticGroup};
 use crate::version::VersionReq;
 
@@ -30,7 +30,12 @@ pub async fn collect(runner: SharedRunner, config: Arc<Config>) -> DiagnosticGro
             let runner = runner.clone();
             let tool = tool.clone();
             let req = config.tools.versions.get(&tool).cloned();
-            tokio::spawn(async move { detect_tool(&runner, &tool, req.as_ref(), timeout).await })
+            let hint = config.tools.hints.get(&tool).cloned();
+            tokio::spawn(async move {
+                detect_tool(&runner, &tool, req.as_ref(), timeout)
+                    .await
+                    .with_configured_hint(hint.as_ref())
+            })
         })
         .collect();
 
@@ -50,6 +55,7 @@ async fn detect_tool(
     req: Option<&VersionReq>,
     timeout: Duration,
 ) -> Diagnostic {
+    let mut hint = None;
     for args in PROBES {
         match runner.run(tool, args, timeout).await {
             Ok(out) => {
@@ -57,20 +63,29 @@ async fn detect_tool(
                 return check_version(tool, version, req);
             }
             Err(CommandFailure::NotFound) => {
+                let install = format!("install {tool} or add it to your PATH");
                 return match req {
                     Some(req) => Diagnostic::failed(tool, format!("not found (requires {req})")),
                     None => Diagnostic::failed(tool, "not found"),
-                };
+                }
+                .with_hint(install);
             }
-            Err(_) => continue, // try the next probe variant
+            Err(e) => {
+                hint = hint.or_else(|| failure_hint(&e));
+                continue; // try the next probe variant
+            }
         }
     }
-    match req {
+    let diag = match req {
         Some(req) => Diagnostic::warning(
             tool,
             format!("installed but version probe failed (requires {req})"),
         ),
         None => Diagnostic::warning(tool, "installed but version probe failed"),
+    };
+    match hint {
+        Some(h) => diag.with_hint(h),
+        None => diag,
     }
 }
 
@@ -78,7 +93,8 @@ fn check_version(tool: &str, version: Option<String>, req: Option<&VersionReq>) 
     match (version, req) {
         (Some(v), Some(req)) => match req.matches(&v) {
             Some(true) => Diagnostic::healthy(tool, v),
-            Some(false) => Diagnostic::failed(tool, format!("{v} (requires {req})")),
+            Some(false) => Diagnostic::failed(tool, format!("{v} (requires {req})"))
+                .with_hint(format!("switch to a {tool} version matching {req}")),
             None => Diagnostic::warning(tool, format!("{v} (could not compare with {req})")),
         },
         (Some(v), None) => Diagnostic::healthy(tool, v),
@@ -197,6 +213,10 @@ mod tests {
         let d = detect_with("v18.19.1\n", ">=20").await;
         assert_eq!(d.status, crate::models::Status::Failed);
         assert_eq!(d.message, "18.19.1 (requires >=20)");
+        assert_eq!(
+            d.hint.as_deref(),
+            Some("switch to a node version matching >=20")
+        );
     }
 
     #[tokio::test]
@@ -211,5 +231,6 @@ mod tests {
         let req = VersionReq::parse(">=20").expect("req");
         let d = detect_tool(&runner, "node", Some(&req), Duration::from_secs(1)).await;
         assert_eq!(d.status, crate::models::Status::Failed);
+        assert!(d.hint.is_some());
     }
 }

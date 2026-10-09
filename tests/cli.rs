@@ -35,6 +35,8 @@ mod inline {
         pub name: String,
         pub status: Status,
         pub message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub hint: Option<String>,
     }
 
     impl Diagnostic {
@@ -43,6 +45,7 @@ mod inline {
                 name: name.into(),
                 status: Status::Healthy,
                 message: msg.into(),
+                hint: None,
             }
         }
         pub fn warning(name: &str, msg: &str) -> Self {
@@ -50,6 +53,7 @@ mod inline {
                 name: name.into(),
                 status: Status::Warning,
                 message: msg.into(),
+                hint: None,
             }
         }
         pub fn failed(name: &str, msg: &str) -> Self {
@@ -57,6 +61,7 @@ mod inline {
                 name: name.into(),
                 status: Status::Failed,
                 message: msg.into(),
+                hint: None,
             }
         }
     }
