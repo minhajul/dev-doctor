@@ -41,7 +41,7 @@ Flow: `main.rs` parses args (`cli.rs`), loads config (`config.rs`), builds a `Sh
 ## Testing
 
 - Unit tests live in `#[cfg(test)]` modules beside the code. Use `command::FakeRunner` (test-only) to program canned responses keyed by `"program arg1 arg2"`; unprogrammed calls return `CommandFailure::NotFound`. See `diagnostics/docker.rs` / `tools.rs` tests for the pattern.
-- `tests/cli.rs` cannot import crate internals (there is no lib target), so it re-declares a small copy of the data model in an `inline` module. If you change the JSON shape, status glyphs, or exit-code semantics, update that copy too.
+- `tests/cli.rs` runs the real binary (`CARGO_BIN_EXE_devdoctor`) inside a `Sandbox` temp dir that is both `HOME` and the cwd, so the developer's user config and any outer `devdoctor.toml` can't leak in. Drive it through `devdoctor.toml` and stick to host-independent categories (env, tools with made-up names, loopback ports).
 - Tests must not depend on Docker/AWS/kubectl being installed.
 
 ## Configuration
