@@ -2,7 +2,9 @@
 //!
 //! Checks whether each requested tool is on PATH and, if so, parses its
 //! reported version. A missing tool becomes a single failed diagnostic;
-//! it never breaks the rest of the report.
+//! it never breaks the rest of the report. If the config sets a version
+//! requirement for a tool, an installed version that does not satisfy it
+//! fails too.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,6 +13,7 @@ use crate::command::{CommandFailure, SharedRunner};
 use crate::config::Config;
 use crate::diagnostics::util::extract_leading_version;
 use crate::models::{Diagnostic, DiagnosticGroup};
+use crate::version::VersionReq;
 
 /// Probe argument sets tried in order. Some tools accept `--version`,
 /// some `-version`, some `-V`; `version` covers the rest.
@@ -26,7 +29,8 @@ pub async fn collect(runner: SharedRunner, config: Arc<Config>) -> DiagnosticGro
         .map(|tool| {
             let runner = runner.clone();
             let tool = tool.clone();
-            tokio::spawn(async move { detect_tool(&runner, &tool, timeout).await })
+            let req = config.tools.versions.get(&tool).cloned();
+            tokio::spawn(async move { detect_tool(&runner, &tool, req.as_ref(), timeout).await })
         })
         .collect();
 
@@ -40,19 +44,49 @@ pub async fn collect(runner: SharedRunner, config: Arc<Config>) -> DiagnosticGro
     group
 }
 
-async fn detect_tool(runner: &SharedRunner, tool: &str, timeout: Duration) -> Diagnostic {
+async fn detect_tool(
+    runner: &SharedRunner,
+    tool: &str,
+    req: Option<&VersionReq>,
+    timeout: Duration,
+) -> Diagnostic {
     for args in PROBES {
         match runner.run(tool, args, timeout).await {
             Ok(out) => {
                 let version = parse_version(tool, &out.combined_output());
-                let msg = version.unwrap_or_else(|| "installed (version unknown)".to_string());
-                return Diagnostic::healthy(tool, msg);
+                return check_version(tool, version, req);
             }
-            Err(CommandFailure::NotFound) => return Diagnostic::failed(tool, "not found"),
+            Err(CommandFailure::NotFound) => {
+                return match req {
+                    Some(req) => Diagnostic::failed(tool, format!("not found (requires {req})")),
+                    None => Diagnostic::failed(tool, "not found"),
+                };
+            }
             Err(_) => continue, // try the next probe variant
         }
     }
-    Diagnostic::warning(tool, "installed but version probe failed")
+    match req {
+        Some(req) => Diagnostic::warning(
+            tool,
+            format!("installed but version probe failed (requires {req})"),
+        ),
+        None => Diagnostic::warning(tool, "installed but version probe failed"),
+    }
+}
+
+fn check_version(tool: &str, version: Option<String>, req: Option<&VersionReq>) -> Diagnostic {
+    match (version, req) {
+        (Some(v), Some(req)) => match req.matches(&v) {
+            Some(true) => Diagnostic::healthy(tool, v),
+            Some(false) => Diagnostic::failed(tool, format!("{v} (requires {req})")),
+            None => Diagnostic::warning(tool, format!("{v} (could not compare with {req})")),
+        },
+        (Some(v), None) => Diagnostic::healthy(tool, v),
+        (None, Some(req)) => {
+            Diagnostic::warning(tool, format!("installed, version unknown (requires {req})"))
+        }
+        (None, None) => Diagnostic::healthy(tool, "installed (version unknown)"),
+    }
 }
 
 /// Two-pass strategy: if the line starts with the tool name, look for a
@@ -126,6 +160,56 @@ mod tests {
     #[tokio::test]
     async fn detect_tool_does_not_panic_for_missing_binary() {
         let runner: SharedRunner = Arc::new(FakeRunner::new());
-        let _ = detect_tool(&runner, "definitely-missing-xyz", Duration::from_secs(1)).await;
+        let _ = detect_tool(
+            &runner,
+            "definitely-missing-xyz",
+            None,
+            Duration::from_secs(1),
+        )
+        .await;
+    }
+
+    async fn detect_with(output: &str, req: &str) -> Diagnostic {
+        let fake = FakeRunner::new();
+        fake.program_response(
+            "node",
+            &["--version"],
+            Ok(crate::command::CommandOutput {
+                stdout: output.into(),
+                stderr: String::new(),
+            }),
+        )
+        .await;
+        let runner: SharedRunner = Arc::new(fake);
+        let req = VersionReq::parse(req).expect("req");
+        detect_tool(&runner, "node", Some(&req), Duration::from_secs(1)).await
+    }
+
+    #[tokio::test]
+    async fn satisfied_requirement_is_healthy() {
+        let d = detect_with("v22.1.0\n", ">=20").await;
+        assert_eq!(d.status, crate::models::Status::Healthy);
+        assert_eq!(d.message, "22.1.0");
+    }
+
+    #[tokio::test]
+    async fn unmet_requirement_fails_with_reason() {
+        let d = detect_with("v18.19.1\n", ">=20").await;
+        assert_eq!(d.status, crate::models::Status::Failed);
+        assert_eq!(d.message, "18.19.1 (requires >=20)");
+    }
+
+    #[tokio::test]
+    async fn unknown_version_with_requirement_warns() {
+        let d = detect_with("no version here\n", ">=20").await;
+        assert_eq!(d.status, crate::models::Status::Warning);
+    }
+
+    #[tokio::test]
+    async fn missing_tool_with_requirement_fails() {
+        let runner: SharedRunner = Arc::new(FakeRunner::new());
+        let req = VersionReq::parse(">=20").expect("req");
+        let d = detect_tool(&runner, "node", Some(&req), Duration::from_secs(1)).await;
+        assert_eq!(d.status, crate::models::Status::Failed);
     }
 }

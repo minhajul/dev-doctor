@@ -140,7 +140,18 @@ and any value the project sets (including lists) replaces the user's.
 # devdoctor.toml at the repo root
 [tools]
 enabled = ["git", "go", "docker"]
+
+# Minimum (or exact) versions. Tools listed here are checked even if they
+# are not in `enabled`.
+[tools.versions]
+go = ">=1.22"
+node = ">=20, <23"
+terraform = "1.9"      # bare or `=` version matches by prefix: 1.9.x
 ```
+
+A tool whose version doesn't meet its requirement is reported as failed, e.g.
+`✗ node  18.19.1 (requires >=20, <23)`. Supported operators are `>=`, `>`,
+`<=`, `<` and `=`; combine several with commas.
 
 ## Exit codes
 

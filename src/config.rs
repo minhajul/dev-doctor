@@ -10,12 +10,15 @@
 //! that is present but malformed returns an error so the user sees a useful
 //! message.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::version::VersionReq;
 
 /// Default command timeout in seconds.
 pub const DEFAULT_TIMEOUT_SECONDS: u64 = 5;
@@ -84,11 +87,18 @@ impl Config {
     }
 
     /// Resolve the list of tools to check, applying defaults if absent.
+    /// Tools with a version requirement are always included.
     pub fn resolved_tools(&self) -> Vec<String> {
-        match &self.tools.enabled {
+        let mut tools: Vec<String> = match &self.tools.enabled {
             Some(list) => list.clone(),
             None => DEFAULT_TOOLS.iter().map(|s| (*s).to_string()).collect(),
+        };
+        for tool in self.tools.versions.keys() {
+            if !tools.contains(tool) {
+                tools.push(tool.clone());
+            }
         }
+        tools
     }
 
     /// Resolve the list of ports to probe, applying defaults if absent.
@@ -104,6 +114,10 @@ impl Config {
 pub struct ToolsConfig {
     /// If `Some`, restricts which tools are checked. If `None`, defaults apply.
     pub enabled: Option<Vec<String>>,
+
+    /// Version requirements per tool, e.g. `node = ">=20"`.
+    #[serde(default)]
+    pub versions: BTreeMap<String, VersionReq>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -348,6 +362,33 @@ warn_default_namespace = false
 
         let err = load_layered(&[&user, &project]).expect_err("should fail");
         assert!(err.to_string().contains("devdoctor.toml"), "{err}");
+    }
+
+    #[test]
+    fn version_requirements_are_parsed_and_add_tools() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[tools]\nenabled = [\"git\"]\n[tools.versions]\nnode = \">=20\"\ngit = \">=2.40\"\n",
+        )
+        .expect("write");
+
+        let c = load_from(&path).expect("load");
+        assert_eq!(c.resolved_tools(), vec!["git", "node"]);
+        assert_eq!(c.tools.versions["node"].to_string(), ">=20");
+    }
+
+    #[test]
+    fn invalid_version_requirement_is_a_config_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[tools.versions]\nnode = \"latest\"\n").expect("write");
+        let err = load_from(&path).expect_err("should fail");
+        assert!(
+            err.to_string().contains("invalid version requirement"),
+            "{err}"
+        );
     }
 
     #[test]

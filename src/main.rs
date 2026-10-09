@@ -12,6 +12,7 @@ mod config;
 mod diagnostics;
 mod models;
 mod output;
+mod version;
 
 use cli::{Category, Cli, Command};
 use command::default_runner;
